@@ -1,0 +1,18 @@
+exit-code: 0          # Report only (don't fail build for unfixed vulns)
+severity:
+  - CRITICAL
+  - HIGH
+  - MEDIUM
+ignore-unfixed: true  # Filter out findings with no available fix
+scanners:
+  - vuln
+  - misconfig
+  - secret
+skip-dirs:
+  - .venv
+  - venv
+  - node_modules
+  - .git
+skip-files:
+  - "*.key"
+  - "*.pem"

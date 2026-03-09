@@ -1,0 +1,93 @@
+# =============================================================================
+# .gitignore — WireGuard Hardened Gateway
+# =============================================================================
+
+# ── WireGuard Secrets (NEVER commit) ─────────────────────────────────────────
+*.key
+*.pem
+*.p12
+/etc/wireguard/
+configs/wg0.conf        # Contains private keys if substituted
+
+# ── Environment / Secrets ─────────────────────────────────────────────────────
+.env
+.env.local
+.env.production
+!configs/.env.example   # The example template IS committed
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+/opt/wg-canary/venv/
+
+# Coverage and test artifacts
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# ── Security Scan Artifacts ───────────────────────────────────────────────────
+bandit-report.json
+bandit-results.sarif
+trivy-*.sarif
+trivy-*.json
+pip-audit-report.json
+
+# ── OS Artifacts ──────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# ── Editor / IDE ──────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+\#*\#
+.#*
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+/var/log/
+wg-gateway-setup.log
+
+# ── Node (if using any JS tooling) ────────────────────────────────────────────
+node_modules/
+npm-debug.log*

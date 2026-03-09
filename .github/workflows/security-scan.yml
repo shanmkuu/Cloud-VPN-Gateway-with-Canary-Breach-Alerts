@@ -1,0 +1,220 @@
+name: "Security Scan — Trivy + Bandit SAST"
+
+on:
+  push:
+    branches: ["main", "develop"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    # Run weekly on Monday at 03:00 UTC (keep deps fresh)
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write   # Required for CodeQL / SARIF upload
+  actions: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  TRIVY_VERSION: "0.50.0"
+
+jobs:
+  # ─── Job 1: Python SAST with Bandit ────────────────────────────────────────
+  bandit-sast:
+    name: "Python SAST — Bandit"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install Bandit & dependencies
+        run: |
+          pip install --upgrade pip
+          pip install bandit[toml] bandit-sarif-formatter
+
+      - name: Run Bandit SAST (JSON output)
+        run: |
+          bandit \
+            --recursive src/ \
+            --severity-level medium \
+            --confidence-level medium \
+            --format json \
+            --output bandit-report.json \
+            --exit-zero          # Don't fail CI — upload results instead
+        continue-on-error: true
+
+      - name: Run Bandit SAST (SARIF output for GitHub Security tab)
+        run: |
+          bandit \
+            --recursive src/ \
+            --severity-level low \
+            --confidence-level low \
+            --format sarif \
+            --output bandit-results.sarif \
+            --exit-zero
+        continue-on-error: true
+
+      - name: Upload Bandit JSON report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
+          retention-days: 30
+
+      - name: Upload Bandit SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: bandit-results.sarif
+          category: bandit
+
+      - name: Hard-fail on HIGH severity findings
+        run: |
+          bandit \
+            --recursive src/ \
+            --severity-level high \
+            --confidence-level high \
+            --format text
+        # This run WILL fail the job on any HIGH+HIGH finding
+
+  # ─── Job 2: Dependency Vulnerability Scan with Safety ──────────────────────
+  dependency-check:
+    name: "Dependency Audit — pip-audit"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit Python dependencies
+        run: |
+          pip-audit \
+            --requirement requirements.txt \
+            --format json \
+            --output pip-audit-report.json \
+            --desc on \
+            --ignore-vuln PYSEC-2023-62   # Example: known false-positive
+        continue-on-error: true
+
+      - name: Upload pip-audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: pip-audit-report.json
+          retention-days: 30
+
+  # ─── Job 3: Container & IaC Scanning with Trivy ────────────────────────────
+  trivy-scan:
+    name: "Container & IaC Scan — Trivy"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy — Filesystem / IaC Scan (SARIF)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          trivy-config: .trivy.yaml
+          format: "sarif"
+          output: "trivy-fs-results.sarif"
+          severity: "CRITICAL,HIGH"
+          ignore-unfixed: true
+
+      - name: Upload Trivy FS SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-fs-results.sarif
+          category: trivy-fs
+
+      - name: Trivy — Config/IaC Scan (Table output for logs)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "config"
+          scan-ref: "."
+          format: "table"
+          severity: "CRITICAL,HIGH,MEDIUM"
+          exit-code: "0"       # Non-zero would block PRs; report only
+        continue-on-error: true
+
+      - name: Trivy — Secret Scanning
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          scanners: "secret"
+          format: "table"
+          exit-code: "1"       # FAIL if secrets are found in commit
+          severity: "HIGH,CRITICAL"
+
+  # ─── Job 4: Shell Script Linting with ShellCheck ───────────────────────────
+  shellcheck:
+    name: "Shell Script Lint — ShellCheck"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ShellCheck on all scripts
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: "./scripts"
+          severity: warning
+          format: tty
+          check_together: "yes"
+
+  # ─── Job 5: YAML / Config Linting ──────────────────────────────────────────
+  yaml-lint:
+    name: "YAML Lint"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: yamllint
+        uses: ibiqlik/action-yamllint@v3
+        with:
+          file_or_dir: "configs/ .github/"
+          config_data: |
+            extends: default
+            rules:
+              line-length:
+                max: 120
+              truthy:
+                allowed-values: ['true', 'false', 'yes', 'no']
+
+  # ─── Summary Job ────────────────────────────────────────────────────────────
+  security-summary:
+    name: "Security Gate"
+    needs: [bandit-sast, dependency-check, trivy-scan, shellcheck, yaml-lint]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check all security jobs passed
+        run: |
+          echo "Security scan results:"
+          echo "  Bandit SAST     : ${{ needs.bandit-sast.result }}"
+          echo "  Dep Audit       : ${{ needs.dependency-check.result }}"
+          echo "  Trivy           : ${{ needs.trivy-scan.result }}"
+          echo "  ShellCheck      : ${{ needs.shellcheck.result }}"
+          echo "  YAML Lint       : ${{ needs.yaml-lint.result }}"
+
+          # Fail the gate if secret scanning job failed (trivy secrets step)
+          if [[ "${{ needs.trivy-scan.result }}" == "failure" ]]; then
+            echo "::error::Trivy detected secrets or critical vulnerabilities!"
+            exit 1
+          fi
+          echo "✓ Security gate passed"

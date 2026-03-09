@@ -1,0 +1,96 @@
+# =============================================================================
+# CrowdSec Custom Scenario: WireGuard Handshake Exhaustion Detection
+# =============================================================================
+# Description : Detects attackers probing or exhausting WireGuard handshake
+#               capacity by sending repeated invalid MAC1 or failed handshake
+#               events within a short time window.
+#
+# Threat Model: An attacker attempting to:
+#   (a) Enumerate valid WireGuard peers by hammering the handshake endpoint
+#   (b) Cause a Denial-of-Service via cryptographic computation exhaustion
+#   (c) Perform replay attacks against handshake initiation packets
+#
+# NIST Reference: SP 800-77 Rev.1 (VPN Security), CIS Control 13.4
+#
+# Installation:
+#   cp wg-handshake-exhaustion.yaml \
+#      /etc/crowdsec/scenarios/wg-handshake-exhaustion.yaml
+#   systemctl restart crowdsec
+#   cscli scenarios inspect wg-handshake-exhaustion
+# =============================================================================
+
+type: leaky          # Leaky-bucket algorithm: steady drip, ban on overflow
+name: shanmkuu/wg-handshake-exhaustion
+description: "Detect WireGuard handshake exhaustion — invalid MAC1 / failed handshake floods"
+author: shanmkuu
+labels:
+  type: bruteforce
+  service: wireguard
+  confidence: 3       # 1 (low) → 3 (high) — we're confident in the pattern
+  spoofable: false
+  remediation: true   # CrowdSec will act on this (ban/captcha)
+  classification:
+    - attack-type:denial_of_service
+    - attack-type:reconnaissance
+
+# ── Filter ────────────────────────────────────────────────────────────────────
+# Match log lines parsed by the WireGuard log parser (grok-based)
+# The parser extracts: evt.Meta.log_type, evt.Meta.source_ip
+filter: |
+  evt.Meta.log_type in ['wg_invalid_mac1', 'wg_handshake_failed', 'wg_replay_attack']
+  and evt.Meta.source_ip != ''
+
+# ── Grouping ──────────────────────────────────────────────────────────────────
+# Group events by the offending source IP so each IP gets its own bucket
+groupby: evt.Meta.source_ip
+
+# ── Leaky Bucket Parameters ───────────────────────────────────────────────────
+# capacity  : Maximum events allowed before overflow (ban trigger)
+# leakspeed : How fast the bucket drains (tolerance window)
+# Tuning    : 8 failures / 2 minutes → ban
+capacity: 8
+leakspeed: "15s"     # one event forgiven every 15 seconds
+
+# ── Ban Duration ──────────────────────────────────────────────────────────────
+duration: 4h         # Initial ban duration; repeat offenders use APPSEC bouncer
+
+# ── Scope ─────────────────────────────────────────────────────────────────────
+scope:
+  type: Ip
+  expression: evt.Meta.source_ip
+
+# ── Blackhole ─────────────────────────────────────────────────────────────────
+# Suppress duplicate alerts for the same IP for this duration
+blackhole: 10m
+
+# ── Reprocess ─────────────────────────────────────────────────────────────────
+reprocess: true      # Re-evaluate this event against other scenarios too
+
+---
+# =============================================================================
+# SUPPLEMENTARY: Rate-of-Fire Scenario (statistical burst variant)
+# Detects a rapid burst (>20 events in 30 seconds) from a single source
+# =============================================================================
+type: trigger        # Single-event trigger after counter hits threshold
+name: shanmkuu/wg-handshake-burst
+description: "Short-burst WireGuard handshake flood — >20 events in 30s"
+author: shanmkuu
+labels:
+  type: bruteforce
+  service: wireguard
+  confidence: 3
+  spoofable: false
+  remediation: true
+
+filter: |
+  evt.Meta.log_type in ['wg_invalid_mac1', 'wg_handshake_failed']
+  and evt.Meta.source_ip != ''
+
+groupby: evt.Meta.source_ip
+capacity: 20
+leakspeed: "1s"      # Very tight: 20 events must arrive within ~20s to trigger
+duration: 48h        # Burst attackers get a longer ban
+scope:
+  type: Ip
+  expression: evt.Meta.source_ip
+blackhole: 1h
