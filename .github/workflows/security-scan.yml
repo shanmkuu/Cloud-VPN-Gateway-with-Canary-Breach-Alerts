@@ -81,7 +81,7 @@ jobs:
             --recursive src/ \
             --severity-level high \
             --confidence-level high \
-            --format txt
+            --format screen
         # This run WILL fail the job on any HIGH+HIGH finding
 
   # ─── Job 2: Dependency Vulnerability Scan with Safety ──────────────────────
