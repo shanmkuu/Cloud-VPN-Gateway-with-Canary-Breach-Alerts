@@ -277,7 +277,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-**Built with 🛡️ by [shanmkuu](https://shanmkuu.vercel.app)**
+**Built with 🛡️ by [Emmanuel Leshan](https://shanmkuu.vercel.app)**
 
 *If this project helped you, consider starring ⭐ the repository!*
 
