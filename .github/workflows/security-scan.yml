@@ -81,7 +81,7 @@ jobs:
             --recursive src/ \
             --severity-level high \
             --confidence-level high \
-            --format screen
+            --format txt
 
         # This run WILL fail the job on any HIGH+HIGH finding
 
